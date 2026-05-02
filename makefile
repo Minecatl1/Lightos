@@ -1,0 +1,512 @@
+SHELL := /bin/bash
+ROOTFS := $(CURDIR)/rootfs
+
+# ----------------------------------------------------------------------
+# Load user configuration (if .config exists)
+# ----------------------------------------------------------------------
+CONFIG_FILE := $(CURDIR)/.config
+ifneq ("$(wildcard $(CONFIG_FILE))","")
+include $(CONFIG_FILE)
+endif
+
+# -- Default values (ultra‑minimal if nothing is set) --
+DESKTOP          ?= lxqt            # lightest desktop with a panel
+WITH_NETWORK     ?= yes             # essential for apt/flatpak
+WITH_WIFI        ?= yes             # skip firmware + wifi daemons by default
+WITH_BLUETOOTH   ?= no              # skip bluetooth stack
+WITH_AUDIO       ?= yes             # skip pipewire if not needed
+WITH_PRINTING    ?= no              # cups avoided
+KERNEL_TYPE      ?= standard        # tinyconfig + vital drivers
+USERNAME         ?= lightos
+USER_PASS        ?= lightos
+HOSTNAME         ?= lightos
+ROOT_PASS        ?= lightos-root
+KERNEL_VERSION   ?= latest
+
+# ----------------------------------------------------------------------
+# Display manager (only if a DE is selected)
+# ----------------------------------------------------------------------
+ifeq ($(DESKTOP),none)
+    DM :=
+    DM_PKG :=
+else ifeq ($(DESKTOP),kde)
+    DM := sddm
+    DM_PKG := sddm
+else ifeq ($(DESKTOP),gnome)
+    DM := gdm3
+    DM_PKG := gdm3
+else
+    DM := lightdm
+    DM_PKG := lightdm
+endif
+
+# ----------------------------------------------------------------------
+# Kernel version handling
+# ----------------------------------------------------------------------
+ifeq ($(KERNEL_VERSION),latest)
+KERNEL_VERSION := $(shell curl -s https://www.kernel.org | grep -A1 'latest_link' | tail -1 | sed -n 's/.*>\(.*\)<.*/\1/p' | cut -d- -f2)
+ifeq ($(KERNEL_VERSION),)
+KERNEL_VERSION := 7.0.3
+endif
+endif
+
+# ----------------------------------------------------------------------
+# Latest Debian stable codename
+# ----------------------------------------------------------------------
+DEBIAN_CODENAME := $(shell wget -qO- https://deb.debian.org/debian/dists/stable/Release | grep ^Codename: | awk '{print $$2}')
+ifeq ($(DEBIAN_CODENAME),)
+DEBIAN_CODENAME := trixie
+endif
+
+# ----------------------------------------------------------------------
+# Targets
+# ----------------------------------------------------------------------
+ISODIR := $(CURDIR)/iso
+ISO_NAME := lightos-$(shell date +%Y%m%d).iso
+
+.PHONY: all configure base kernel desktop audio flatpak usp accounts iso clean container
+
+all: iso
+
+# ======================================================================
+# Embedded scripts – created automatically if missing
+# ======================================================================
+
+configure.sh:
+	@echo "==> Generating configure.sh..."
+	@cat > $@ <<'SCRIPTEOF'
+#!/usr/bin/env bash
+# LightOS interactive configuration – choose only what you need
+
+CONFIG_FILE=".config"
+
+echo "========================================="
+echo "  LightOS Minimal Configuration"
+echo "========================================="
+echo ""
+
+# --- Desktop / GUI ---
+echo "Desktop environment (choose 'none' for console-only, <100 MB RAM):"
+select DESKTOP in none openbox lxde xfce mate lxqt kde gnome; do
+    case $DESKTOP in
+        none|openbox|lxde|xfce|mate|lxqt|kde|gnome) break ;;
+        *) echo "Invalid choice, pick 1-8." ;;
+    esac
+done
+
+# --- Optional features ---
+read -p "Include networking (APT/Flatpak need it) [Y/n]: " net
+WITH_NETWORK=$( [[ ! "$net" =~ ^[Nn] ]] && echo yes || echo no )
+
+read -p "Include Wi‑Fi support (needs firmware + NetworkManager) [y/N]: " wifi
+WITH_WIFI=$( [[ "$wifi" =~ ^[Yy] ]] && echo yes || echo no )
+
+read -p "Include Bluetooth [y/N]: " bt
+WITH_BLUETOOTH=$( [[ "$bt" =~ ^[Yy] ]] && echo yes || echo no )
+
+read -p "Include audio (PipeWire+JACK) [y/N]: " audio
+WITH_AUDIO=$( [[ "$audio" =~ ^[Yy] ]] && echo yes || echo no )
+
+read -p "Include printing (CUPS) [y/N]: " prt
+WITH_PRINTING=$( [[ "$prt" =~ ^[Yy] ]] && echo yes || echo no )
+
+# --- Kernel optimisation ---
+echo "Kernel type:"
+echo "  1) Standard (defconfig – generic, larger)"
+echo "  2) Minimal (tinyconfig + essential drivers – very small, may lack exotic hardware)"
+read -p "Choice [2]: " ktype
+if [ "$ktype" = "1" ]; then
+    KERNEL_TYPE=standard
+else
+    KERNEL_TYPE=minimal
+fi
+
+# --- User / hostname ---
+read -p "Username [lightos]: " USERNAME
+USERNAME=${USERNAME:-lightos}
+
+read -s -p "Password for $USERNAME (empty = no password): " USER_PASS
+echo ""
+if [ -n "$USER_PASS" ]; then
+    read -s -p "Confirm password: " USER_PASS2
+    echo ""
+    if [ "$USER_PASS" != "$USER_PASS2" ]; then
+        echo "Passwords do not match."; exit 1
+    fi
+fi
+
+read -p "Hostname [lightbox]: " HOSTNAME
+HOSTNAME=${HOSTNAME:-lightbox}
+
+read -s -p "Root password (empty = disable root login): " ROOT_PASS
+echo ""
+if [ -n "$ROOT_PASS" ]; then
+    read -s -p "Confirm root password: " ROOT_PASS2
+    echo ""
+    if [ "$ROOT_PASS" != "$ROOT_PASS2" ]; then
+        echo "Passwords do not match."; exit 1
+    fi
+fi
+
+# --- Kernel version source ---
+echo "Kernel version source:"
+echo "  1) Latest stable from kernel.org"
+echo "  2) Manually specify"
+read -p "Choice [1]: " kchoice
+kchoice=${kchoice:-1}
+if [ "$kchoice" = "2" ]; then
+    read -p "Enter kernel version (e.g. 6.10.5): " KERNEL_VERSION
+else
+    KERNEL_VERSION="latest"
+fi
+
+# --- Write .config ---
+cat > "$CONFIG_FILE" <<EOF
+# LightOS build configuration
+DESKTOP=$DESKTOP
+WITH_NETWORK=$WITH_NETWORK
+WITH_WIFI=$WITH_WIFI
+WITH_BLUETOOTH=$WITH_BLUETOOTH
+WITH_AUDIO=$WITH_AUDIO
+WITH_PRINTING=$WITH_PRINTING
+KERNEL_TYPE=$KERNEL_TYPE
+USERNAME=$USERNAME
+USER_PASS=$USER_PASS
+HOSTNAME=$HOSTNAME
+ROOT_PASS=$ROOT_PASS
+KERNEL_VERSION=$KERNEL_VERSION
+EOF
+
+echo ""
+echo "Configuration saved. Run 'make' to build."
+SCRIPTEOF
+	@chmod +x $@
+
+usp.sh:
+	@echo "==> Generating usp.sh..."
+	@cat > $@ <<'SCRIPTEOF'
+#!/usr/bin/env bash
+# usp - LightOS Unified Package Manager (APT + Flatpak --user)
+set -e
+FLATPAK_USER_DIR="$HOME/.local/share/flatpak"
+[ ! -d "$FLATPAK_USER_DIR" ] && flatpak config --user languages="*" &>/dev/null || true
+usage() {
+    cat <<EOF
+usp – LightOS Unified Package Manager
+Commands:
+  search <term>        Search APT and Flathub
+  install <pkg>        Install a package (choose source if both available)
+  remove <pkg>         Remove from whatever source installed it
+  run <pkg>            Launch an installed application
+  update               Update APT and Flatpak user apps
+  list                 Show manually installed APT and user Flatpak apps
+EOF
+    exit 1
+}
+flatpak_installed() { flatpak list --user --columns=application 2>/dev/null | grep -Fxq "$1"; }
+apt_installed() { dpkg -l "$1" 2>/dev/null | grep -q '^ii'; }
+find_flatpak_id() { flatpak search --user "$1" 2>/dev/null | head -1 | awk '{print $1}'; }
+search() {
+    echo -e "\e[1m=== APT Packages ===\e[0m"
+    apt-cache search "$1" 2>/dev/null | head -20 || true
+    echo -e "\n\e[1m=== Flatpak Applications (Flathub) ===\e[0m"
+    flatpak search "$1" 2>/dev/null | head -20 || true
+}
+install() {
+    local pkg="$1"
+    local apt_candidate=$(apt-cache search "^${pkg}$" 2>/dev/null | awk '{print $1}' | head -1)
+    local fp_id=$(find_flatpak_id "$pkg")
+    if [ -z "$apt_candidate" ] && [ -z "$fp_id" ]; then echo "Not found."; exit 1; fi
+    if [ -z "$apt_candidate" ]; then
+        echo "Installing Flatpak (user): $fp_id"
+        flatpak install --user -y flathub "$fp_id"
+    elif [ -z "$fp_id" ]; then
+        echo "Installing APT: $apt_candidate"
+        sudo apt install -y "$apt_candidate"
+    else
+        echo "Found two options:"
+        echo "  1) APT: $apt_candidate"
+        echo "  2) Flatpak: $fp_id"
+        read -p "Choose [1/2]: " choice
+        case "$choice" in
+            1) sudo apt install -y "$apt_candidate" ;;
+            2) flatpak install --user -y flathub "$fp_id" ;;
+            *) echo "Invalid"; exit 1 ;;
+        esac
+    fi
+}
+remove() {
+    local pkg="$1"
+    if apt_installed "$pkg"; then
+        sudo apt remove --purge -y "$pkg" && echo "Removed APT: $pkg"
+        return
+    fi
+    local fp_id=$(find_flatpak_id "$pkg")
+    if [ -n "$fp_id" ] && flatpak_installed "$fp_id"; then
+        flatpak uninstall --user -y "$fp_id" && echo "Removed Flatpak: $fp_id"
+        return
+    fi
+    echo "Not installed."
+    exit 1
+}
+run() {
+    local pkg="$1"
+    local desktop=$(find /usr/share/applications -name "*${pkg}*.desktop" 2>/dev/null | head -1)
+    if [ -n "$desktop" ]; then
+        gtk-launch "$(basename "$desktop" .desktop)" 2>/dev/null || exit 1
+        return
+    fi
+    local fp_id=$(find_flatpak_id "$pkg")
+    if [ -n "$fp_id" ] && flatpak_installed "$fp_id"; then
+        flatpak run --user "$fp_id"
+        return
+    fi
+    echo "No executable found for '$pkg'."
+    exit 1
+}
+update() {
+    echo "Updating APT..."; sudo apt update && sudo apt upgrade -y
+    echo "Updating Flatpak..."; flatpak update --user -y
+}
+list() {
+    echo "=== APT manual packages ==="
+    comm -23 <(apt-mark showmanual | sort) <(gzip -dc /var/log/installer/initial-status.gz | grep '^Package:' | cut -d' ' -f2 | sort) 2>/dev/null || echo "(unknown baseline)"
+    echo -e "\n=== Flatpak (user) ==="
+    flatpak list --user --columns=application,name 2>/dev/null || echo "none"
+}
+[ $# -lt 1 ] && usage
+cmd="$1"; shift
+case "$cmd" in
+    search)  search "$@" ;;
+    install) install "$@" ;;
+    remove)  remove "$@" ;;
+    run)     run "$@" ;;
+    update)  update ;;
+    list)    list ;;
+    *) usage ;;
+esac
+SCRIPTEOF
+	@chmod +x $@
+
+# ----------------------------------------------------------------------
+# Interactive configuration (only if .config missing)
+# ----------------------------------------------------------------------
+configure: configure.sh
+	@if [ ! -f .config ]; then \
+		echo "Running interactive configuration..."; \
+		./configure.sh; \
+	else \
+		echo "Configuration present. Run 'rm .config && make configure' to reconfigure."; \
+	fi
+
+# ----------------------------------------------------------------------
+# 1. Minimal Debian base
+# ----------------------------------------------------------------------
+base:
+	@echo "==> Bootstrapping Debian $(DEBIAN_CODENAME)..."
+	sudo debootstrap --arch=amd64 --variant=minbase $(DEBIAN_CODENAME) $(ROOTFS) http://deb.debian.org/debian
+	sudo mkdir -p $(ROOTFS)/etc/apt/sources.list.d
+	echo "Types: deb\nURIs: http://deb.debian.org/debian\nSuites: $(DEBIAN_CODENAME) $(DEBIAN_CODENAME)-updates\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg" | sudo tee $(ROOTFS)/etc/apt/sources.list.d/debian.sources
+	echo "Types: deb\nURIs: http://security.debian.org/debian-security\nSuites: $(DEBIAN_CODENAME)-security\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg" | sudo tee $(ROOTFS)/etc/apt/sources.list.d/debian-security.sources
+	sudo chroot $(ROOTFS) apt update
+	# Only the bare essentials for kernel compilation
+	sudo chroot $(ROOTFS) apt install -y --no-install-recommends \
+		build-essential libncurses-dev bison flex libssl-dev libelf-dev bc wget curl gnupg ca-certificates
+
+# ----------------------------------------------------------------------
+# 2. Kernel – standard or ultra‑minimal
+# ----------------------------------------------------------------------
+kernel: base
+	@echo "==> Downloading Linux kernel $(KERNEL_VERSION)..."
+	wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$(KERNEL_VERSION).tar.xz || \
+		(echo "Kernel download failed – using fallback 7.0.3"; \
+		 KERNEL_VERSION=7.0.3; \
+		 wget -q https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.0.3.tar.xz)
+	tar -xf linux-$(KERNEL_VERSION).tar.xz -C $(ROOTFS)/usr/src
+ifeq ($(KERNEL_TYPE),minimal)
+	@echo "==> Applying tinyconfig + essential drivers..."
+	sudo chroot $(ROOTFS) bash -c "cd /usr/src/linux-$(KERNEL_VERSION) && \
+		make tinyconfig && \
+		scripts/config --enable CONFIG_64BIT \
+		--enable CONFIG_X86_64 \
+		--enable CONFIG_PCI \
+		--enable CONFIG_BLK_DEV_SD \
+		--enable CONFIG_ATA \
+		--enable CONFIG_SATA_AHCI \
+		--enable CONFIG_EXT4_FS \
+		--enable CONFIG_OVERLAY_FS \
+		--enable CONFIG_NET \
+		--enable CONFIG_INET \
+		--enable CONFIG_NETDEVICES \
+		--enable CONFIG_E1000 \
+		--enable CONFIG_E1000E \
+		--enable CONFIG_VIRTIO_BLK \
+		--enable CONFIG_VIRTIO_NET \
+		--enable CONFIG_USB_XHCI_HCD \
+		--enable CONFIG_USB_STORAGE \
+		--enable CONFIG_KEYBOARD_ATKBD \
+		--enable CONFIG_INPUT_MOUSE \
+		--enable CONFIG_FB \
+		--enable CONFIG_DRM \
+		--enable CONFIG_DRM_SIMPLEDRM \
+		--enable CONFIG_TTY \
+		--enable CONFIG_SERIAL_8250 \
+		--enable CONFIG_SERIAL_8250_CONSOLE && \
+		make olddefconfig && \
+		make -j$$(nproc) && \
+		make modules_install && \
+		make install"
+else
+	sudo chroot $(ROOTFS) bash -c "cd /usr/src/linux-$(KERNEL_VERSION) && \
+		make defconfig && \
+		make -j$$(nproc) && \
+		make modules_install && \
+		make install"
+endif
+	rm -f linux-$(KERNEL_VERSION).tar.xz
+
+# ----------------------------------------------------------------------
+# 3. Desktop (if any) + networking, bluetooth, etc.
+# ----------------------------------------------------------------------
+desktop: base
+	@echo "==> Installing selected desktop and optional features..."
+	# Basic Xorg if a desktop is chosen
+ifeq ($(DESKTOP),none)
+	@echo "Skipping desktop – console only."
+else
+	sudo chroot $(ROOTFS) apt install -y --no-install-recommends \
+		xserver-xorg xinit
+endif
+	# Networking
+ifeq ($(WITH_NETWORK),yes)
+	sudo chroot $(ROOTFS) apt install -y --no-install-recommends \
+		netbase ifupdown
+	# If Wi-Fi is wanted, install NetworkManager + firmware
+ifeq ($(WITH_WIFI),yes)
+	sudo chroot $(ROOTFS) apt install -y --no-install-recommends \
+		network-manager network-manager-gnome \
+		firmware-linux-free firmware-linux-nonfree firmware-misc-nonfree
+	sudo chroot $(ROOTFS) systemctl enable NetworkManager
+else
+	# Without Wi-Fi we can still use basic ifupdown; enable networking.service
+	sudo chroot $(ROOTFS) systemctl enable networking
+endif
+endif
+	# Bluetooth
+ifeq ($(WITH_BLUETOOTH),yes)
+	sudo chroot $(ROOTFS) apt install -y --no-install-recommends \
+		bluetooth bluez blueman
+	sudo chroot $(ROOTFS) systemctl enable bluetooth
+endif
+	# Desktop packages
+ifeq ($(DESKTOP),openbox)
+	sudo chroot $(ROOTFS) apt install -y --no-install-recommends \
+		openbox obconf tint2 feh pcmanfm xterm
+else ifeq ($(DESKTOP),lxde)
+	sudo chroot $(ROOTFS) apt install -y --no-install-recommends lxde-core
+else ifeq ($(DESKTOP),xfce)
+	sudo chroot $(ROOTFS) apt install -y --no-install-recommends \
+		xfce4-session xfce4-panel xfwm4 thunar xfdesktop4 \
+		xfce4-settings xfce4-terminal
+else ifeq ($(DESKTOP),mate)
+	sudo chroot $(ROOTFS) apt install -y --no-install-recommends \
+		mate-desktop-environment-core
+else ifeq ($(DESKTOP),lxqt)
+	sudo chroot $(ROOTFS) apt install -y --no-install-recommends \
+		lxqt-core lxqt-session lxqt-panel pcmanfm-qt qterminal
+else ifeq ($(DESKTOP),kde)
+	sudo chroot $(ROOTFS) apt install -y --no-install-recommends \
+		plasma-desktop plasma-nm
+else ifeq ($(DESKTOP),gnome)
+	sudo chroot $(ROOTFS) apt install -y --no-install-recommends \
+		gnome-session gnome-shell gnome-terminal nautilus
+endif
+	# Display manager (if desktop != none)
+ifneq ($(DESKTOP),none)
+	sudo chroot $(ROOTFS) apt install -y --no-install-recommends $(DM_PKG)
+	sudo chroot $(ROOTFS) systemctl enable $(DM)
+endif
+
+# ----------------------------------------------------------------------
+# 4. Audio – only if enabled
+# ----------------------------------------------------------------------
+audio: base
+ifeq ($(WITH_AUDIO),yes)
+	@echo "==> Installing PipeWire + JACK..."
+	sudo chroot $(ROOTFS) apt install -y --no-install-recommends \
+		pipewire-audio pipewire-jack libspa-0.2-jack wireplumber \
+		pavucontrol-qt alsa-utils
+	sudo chroot $(ROOTFS) systemctl --global enable pipewire.service
+	sudo chroot $(ROOTFS) systemctl --global enable wireplumber.service
+	sudo chroot $(ROOTFS) systemctl --global enable pipewire-pulse.service
+else
+	@echo "Skipping audio."
+endif
+
+# ----------------------------------------------------------------------
+# 5. Flatpak pre‑installed
+# ----------------------------------------------------------------------
+flatpak: base
+	@echo "==> Installing Flatpak..."
+	sudo chroot $(ROOTFS) apt install -y flatpak
+	sudo chroot $(ROOTFS) flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+# ----------------------------------------------------------------------
+# 6. Unified package manager
+# ----------------------------------------------------------------------
+usp: base usp.sh
+	@echo "==> Installing usp..."
+	sudo cp usp.sh $(ROOTFS)/usr/local/bin/usp
+	sudo chmod +x $(ROOTFS)/usr/local/bin/usp
+
+# ----------------------------------------------------------------------
+# 7. User accounts / hostname
+# ----------------------------------------------------------------------
+accounts: base
+	@echo "==> Creating user $(USERNAME)..."
+	sudo chroot $(ROOTFS) useradd -m -s /bin/bash -G sudo,audio,video,netdev,bluetooth $(USERNAME) || true
+ifneq ($(USER_PASS),)
+	sudo chroot $(ROOTFS) bash -c "echo '$(USERNAME):$(USER_PASS)' | chpasswd"
+endif
+ifneq ($(ROOT_PASS),)
+	sudo chroot $(ROOTFS) bash -c "echo 'root:$(ROOT_PASS)' | chpasswd"
+else
+	sudo chroot $(ROOTFS) passwd -l root
+endif
+	@echo "==> Setting hostname to $(HOSTNAME)..."
+	echo "$(HOSTNAME)" | sudo tee $(ROOTFS)/etc/hostname
+	sudo chroot $(ROOTFS) sed -i "s/debian/$(HOSTNAME)/g" /etc/hosts
+
+# ----------------------------------------------------------------------
+# 8. Slim down and make ISO
+# ----------------------------------------------------------------------
+iso: configure kernel desktop audio flatpak usp accounts
+	@echo "==> Purging build tools and cleaning apt cache..."
+	sudo chroot $(ROOTFS) apt remove --purge -y build-essential libncurses-dev bison flex libssl-dev libelf-dev bc || true
+	sudo chroot $(ROOTFS) apt autoremove --purge -y
+	sudo chroot $(ROOTFS) apt clean
+	@echo "==> Creating bootable ISO image..."
+	mkdir -p $(ISODIR)/live
+	sudo mksquashfs $(ROOTFS) $(ISODIR)/live/filesystem.squashfs -comp xz -e boot
+	sudo cp $(ROOTFS)/boot/vmlinuz-$(KERNEL_VERSION)* $(ISODIR)/live/vmlinuz
+	sudo cp $(ROOTFS)/boot/initrd.img-$(KERNEL_VERSION)* $(ISODIR)/live/initrd
+	mkdir -p $(ISODIR)/boot/grub
+	echo 'set timeout=5' > $(ISODIR)/boot/grub/grub.cfg
+	echo 'menuentry "LightOS Live" {' >> $(ISODIR)/boot/grub/grub.cfg
+	echo '  linux /live/vmlinuz boot=live quiet splash' >> $(ISODIR)/boot/grub/grub.cfg
+	echo '  initrd /live/initrd' >> $(ISODIR)/boot/grub/grub.cfg
+	echo '}' >> $(ISODIR)/boot/grub/grub.cfg
+	sudo grub-mkrescue -o $(ISO_NAME) $(ISODIR)
+
+# ----------------------------------------------------------------------
+# Container tarball (optional)
+# ----------------------------------------------------------------------
+container: configure base kernel desktop audio flatpak usp accounts
+	@echo "==> Creating rootfs tarball for chroot/containers..."
+	sudo tar -czpf lightos-rootfs.tar.gz -C $(ROOTFS) .
+	@echo "Container tarball created: lightos-rootfs.tar.gz"
+
+# ----------------------------------------------------------------------
+clean:
+	sudo rm -rf $(ROOTFS) $(ISODIR) $(ISO_NAME) linux-*.tar.xz
+	rm -f lightos-rootfs.tar.gz
