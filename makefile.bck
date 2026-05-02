@@ -1,6 +1,5 @@
 SHELL := /bin/bash
 ROOTFS := $(CURDIR)/rootfs
-
 # ----------------------------------------------------------------------
 # Load user configuration (if .config exists)
 # ----------------------------------------------------------------------
@@ -74,209 +73,218 @@ all: iso
 
 configure.sh:
 	@echo "==> Generating configure.sh..."
-	@printf '%s\n' \
-		'#!/usr/bin/env bash' \
-		'# LightOS interactive configuration – choose only what you need' \
-		'' \
-		'CONFIG_FILE=".config"' \
-		'echo "========================================="' \
-		'echo "  LightOS Minimal Configuration"' \
-		'echo "========================================="' \
-		'echo ""' \
-		'echo "Desktop environment (choose '\''none'\'' for console-only, <100 MB RAM):"' \
-		'select DESKTOP in none openbox lxde xfce mate lxqt kde gnome; do' \
-		'    case $$DESKTOP in' \
-		'        none|openbox|lxde|xfce|mate|lxqt|kde|gnome) break ;;' \
-		'        *) echo "Invalid choice, pick 1-8." ;;' \
-		'    esac' \
-		'done' \
-		'' \
-		'read -p "Include networking (APT/Flatpak need it) [Y/n]: " net' \
-		'WITH_NETWORK=$$( [[ ! "$$net" =~ ^[Nn] ]] && echo yes || echo no )' \
-		'' \
-		'read -p "Include Wi‑Fi support (needs firmware + NetworkManager) [y/N]: " wifi' \
-		'WITH_WIFI=$$( [[ "$$wifi" =~ ^[Yy] ]] && echo yes || echo no )' \
-		'' \
-		'read -p "Include Bluetooth [y/N]: " bt' \
-		'WITH_BLUETOOTH=$$( [[ "$$bt" =~ ^[Yy] ]] && echo yes || echo no )' \
-		'' \
-		'read -p "Include audio (PipeWire+JACK) [y/N]: " audio' \
-		'WITH_AUDIO=$$( [[ "$$audio" =~ ^[Yy] ]] && echo yes || echo no )' \
-		'' \
-		'read -p "Include printing (CUPS) [y/N]: " prt' \
-		'WITH_PRINTING=$$( [[ "$$prt" =~ ^[Yy] ]] && echo yes || echo no )' \
-		'' \
-		'echo "Kernel type:"' \
-		'echo "  1) Standard (defconfig – generic, larger)"' \
-		'echo "  2) Minimal (tinyconfig + essential drivers – very small, may lack exotic hardware)"' \
-		'read -p "Choice [2]: " ktype' \
-		'if [ "$$ktype" = "1" ]; then' \
-		'    KERNEL_TYPE=standard' \
-		'else' \
-		'    KERNEL_TYPE=minimal' \
-		'fi' \
-		'' \
-		'read -p "Username [lightos]: " USERNAME' \
-		'USERNAME=$${USERNAME:-lightos}' \
-		'' \
-		'read -s -p "Password for $$USERNAME (empty = no password): " USER_PASS' \
-		'echo ""' \
-		'if [ -n "$$USER_PASS" ]; then' \
-		'    read -s -p "Confirm password: " USER_PASS2' \
-		'    echo ""' \
-		'    if [ "$$USER_PASS" != "$$USER_PASS2" ]; then' \
-		'        echo "Passwords do not match."; exit 1' \
-		'    fi' \
-		'fi' \
-		'' \
-		'read -p "Hostname [lightbox]: " HOSTNAME' \
-		'HOSTNAME=$${HOSTNAME:-lightbox}' \
-		'' \
-		'read -s -p "Root password (empty = disable root login): " ROOT_PASS' \
-		'echo ""' \
-		'if [ -n "$$ROOT_PASS" ]; then' \
-		'    read -s -p "Confirm root password: " ROOT_PASS2' \
-		'    echo ""' \
-		'    if [ "$$ROOT_PASS" != "$$ROOT_PASS2" ]; then' \
-		'        echo "Passwords do not match."; exit 1' \
-		'    fi' \
-		'fi' \
-		'' \
-		'echo "Kernel version source:"' \
-		'echo "  1) Latest stable from kernel.org"' \
-		'echo "  2) Manually specify"' \
-		'read -p "Choice [1]: " kchoice' \
-		'kchoice=$${kchoice:-1}' \
-		'if [ "$$kchoice" = "2" ]; then' \
-		'    read -p "Enter kernel version (e.g. 6.10.5): " KERNEL_VERSION' \
-		'else' \
-		'    KERNEL_VERSION="latest"' \
-		'fi' \
-		'' \
-		'cat > "$$CONFIG_FILE" <<EOF' \
-		'# LightOS build configuration' \
-		'DESKTOP=$$DESKTOP' \
-		'WITH_NETWORK=$$WITH_NETWORK' \
-		'WITH_WIFI=$$WITH_WIFI' \
-		'WITH_BLUETOOTH=$$WITH_BLUETOOTH' \
-		'WITH_AUDIO=$$WITH_AUDIO' \
-		'WITH_PRINTING=$$WITH_PRINTING' \
-		'KERNEL_TYPE=$$KERNEL_TYPE' \
-		'USERNAME=$$USERNAME' \
-		'USER_PASS=$$USER_PASS' \
-		'HOSTNAME=$$HOSTNAME' \
-		'ROOT_PASS=$$ROOT_PASS' \
-		'KERNEL_VERSION=$$KERNEL_VERSION' \
-		'EOF' \
-		'' \
-		'echo ""' \
-		'echo "Configuration saved. Run '\''make'\'' to build."' 
-	 > $@
+	@cat > $@ <<'SCRIPTEOF'
+	#!/usr/bin/env bash
+	# LightOS interactive configuration – choose only what you need
+	
+	CONFIG_FILE=".config"
+	
+	echo "========================================="
+	echo "  LightOS Minimal Configuration"
+	echo "========================================="
+	echo ""
+	
+	# --- Desktop / GUI ---
+	echo "Desktop environment (choose 'none' for console-only, <100 MB RAM):"
+	select DESKTOP in none openbox lxde xfce mate lxqt kde gnome; do
+	    case $DESKTOP in
+	        none|openbox|lxde|xfce|mate|lxqt|kde|gnome) break ;;
+	        *) echo "Invalid choice, pick 1-8." ;;
+	    esac
+	done
+	
+	# --- Optional features ---
+	read -p "Include networking (APT/Flatpak need it) [Y/n]: " net
+	WITH_NETWORK=$( [[ ! "$net" =~ ^[Nn] ]] && echo yes || echo no )
+	
+	read -p "Include Wi‑Fi support (needs firmware + NetworkManager) [y/N]: " wifi
+	WITH_WIFI=$( [[ "$wifi" =~ ^[Yy] ]] && echo yes || echo no )
+	
+	read -p "Include Bluetooth [y/N]: " bt
+	WITH_BLUETOOTH=$( [[ "$bt" =~ ^[Yy] ]] && echo yes || echo no )
+	
+	read -p "Include audio (PipeWire+JACK) [y/N]: " audio
+	WITH_AUDIO=$( [[ "$audio" =~ ^[Yy] ]] && echo yes || echo no )
+	
+	read -p "Include printing (CUPS) [y/N]: " prt
+	WITH_PRINTING=$( [[ "$prt" =~ ^[Yy] ]] && echo yes || echo no )
+	
+	# --- Kernel optimisation ---
+	echo "Kernel type:"
+	echo "  1) Standard (defconfig – generic, larger)"
+	echo "  2) Minimal (tinyconfig + essential drivers – very small, may lack exotic hardware)"
+	read -p "Choice [2]: " ktype
+	if [ "$ktype" = "1" ]; then
+	    KERNEL_TYPE=standard
+	else
+	    KERNEL_TYPE=minimal
+	fi
+	
+	# --- User / hostname ---
+	read -p "Username [lightos]: " USERNAME
+	USERNAME=${USERNAME:-lightos}
+	
+	read -s -p "Password for $USERNAME (empty = no password): " USER_PASS
+	echo ""
+	if [ -n "$USER_PASS" ]; then
+	    read -s -p "Confirm password: " USER_PASS2
+	    echo ""
+	    if [ "$USER_PASS" != "$USER_PASS2" ]; then
+	        echo "Passwords do not match."; exit 1
+	    fi
+	fi
+	
+	read -p "Hostname [lightbox]: " HOSTNAME
+	HOSTNAME=${HOSTNAME:-lightbox}
+	
+	read -s -p "Root password (empty = disable root login): " ROOT_PASS
+	echo ""
+	if [ -n "$ROOT_PASS" ]; then
+	    read -s -p "Confirm root password: " ROOT_PASS2
+	    echo ""
+	    if [ "$ROOT_PASS" != "$ROOT_PASS2" ]; then
+	        echo "Passwords do not match."; exit 1
+	    fi
+	fi
+	
+	# --- Kernel version source ---
+	echo "Kernel version source:"
+	echo "  1) Latest stable from kernel.org"
+	echo "  2) Manually specify"
+	read -p "Choice [1]: " kchoice
+	kchoice=${kchoice:-1}
+	if [ "$kchoice" = "2" ]; then
+	    read -p "Enter kernel version (e.g. 6.10.5): " KERNEL_VERSION
+	else
+	    KERNEL_VERSION="latest"
+	fi
+	
+	# --- Write .config ---
+	cat > "$CONFIG_FILE" <<EOF
+	# LightOS build configuration
+	DESKTOP=$DESKTOP
+	WITH_NETWORK=$WITH_NETWORK
+	WITH_WIFI=$WITH_WIFI
+	WITH_BLUETOOTH=$WITH_BLUETOOTH
+	WITH_AUDIO=$WITH_AUDIO
+	WITH_PRINTING=$WITH_PRINTING
+	KERNEL_TYPE=$KERNEL_TYPE
+	USERNAME=$USERNAME
+	USER_PASS=$USER_PASS
+	HOSTNAME=$HOSTNAME
+	ROOT_PASS=$ROOT_PASS
+	KERNEL_VERSION=$KERNEL_VERSION
+	EOF
+	
+	echo ""
+	echo "Configuration saved. Run 'make' to build."
+	SCRIPTEOF
 	@chmod +x $@
+
 usp.sh:
 	@echo "==> Generating usp.sh..."
-	@printf '%s\n' \
-		'#!/usr/bin/env bash' \
-		'# usp - LightOS Unified Package Manager (APT + Flatpak --user)' \
-		'set -e' \
-		'FLATPAK_USER_DIR="$$HOME/.local/share/flatpak"' \
-		'[ ! -d "$$FLATPAK_USER_DIR" ] && flatpak config --user languages="*" &>/dev/null || true' \
-		'usage() {' \
-		'    cat <<EOF' \
-		'usp – LightOS Unified Package Manager' \
-		'Commands:' \
-		'  search <term>        Search APT and Flathub' \
-		'  install <pkg>        Install a package (choose source if both available)' \
-		'  remove <pkg>         Remove from whatever source installed it' \
-		'  run <pkg>            Launch an installed application' \
-		'  update               Update APT and Flatpak user apps' \
-		'  list                 Show manually installed APT and user Flatpak apps' \
-		'EOF' \
-		'    exit 1' \
-		'}' \
-		'flatpak_installed() { flatpak list --user --columns=application 2>/dev/null | grep -Fxq "$$1"; }' \
-		'apt_installed() { dpkg -l "$$1" 2>/dev/null | grep -q '\''^ii'\''; }' \
-		'find_flatpak_id() { flatpak search --user "$$1" 2>/dev/null | head -1 | awk '\''{print $$1}'\''; }' \
-		'search() {' \
-		'    echo -e "\e[1m=== APT Packages ===\e[0m"' \
-		'    apt-cache search "$$1" 2>/dev/null | head -20 || true' \
-		'    echo -e "\n\e[1m=== Flatpak Applications (Flathub) ===\e[0m"' \
-		'    flatpak search "$$1" 2>/dev/null | head -20 || true' \
-		'}' \
-		'install() {' \
-		'    local pkg="$$1"' \
-		'    local apt_candidate=$$(apt-cache search "^$${pkg}$$" 2>/dev/null | awk '\''{print $$1}'\'' | head -1)' \
-		'    local fp_id=$$(find_flatpak_id "$$pkg")' \
-		'    if [ -z "$$apt_candidate" ] && [ -z "$$fp_id" ]; then echo "Not found."; exit 1; fi' \
-		'    if [ -z "$$apt_candidate" ]; then' \
-		'        echo "Installing Flatpak (user): $$fp_id"' \
-		'        flatpak install --user -y flathub "$$fp_id"' \
-		'    elif [ -z "$$fp_id" ]; then' \
-		'        echo "Installing APT: $$apt_candidate"' \
-		'        sudo apt install -y "$$apt_candidate"' \
-		'    else' \
-		'        echo "Found two options:"' \
-		'        echo "  1) APT: $$apt_candidate"' \
-		'        echo "  2) Flatpak: $$fp_id"' \
-		'        read -p "Choose [1/2]: " choice' \
-		'        case "$$choice" in' \
-		'            1) sudo apt install -y "$$apt_candidate" ;;' \
-		'            2) flatpak install --user -y flathub "$$fp_id" ;;' \
-		'            *) echo "Invalid"; exit 1 ;;' \
-		'        esac' \
-		'    fi' \
-		'}' \
-		'remove() {' \
-		'    local pkg="$$1"' \
-		'    if apt_installed "$$pkg"; then' \
-		'        sudo apt remove --purge -y "$$pkg" && echo "Removed APT: $$pkg"' \
-		'        return' \
-		'    fi' \
-		'    local fp_id=$$(find_flatpak_id "$$pkg")' \
-		'    if [ -n "$$fp_id" ] && flatpak_installed "$$fp_id"; then' \
-		'        flatpak uninstall --user -y "$$fp_id" && echo "Removed Flatpak: $$fp_id"' \
-		'        return' \
-		'    fi' \
-		'    echo "Not installed."' \
-		'    exit 1' \
-		'}' \
-		'run() {' \
-		'    local pkg="$$1"' \
-		'    local desktop=$$(find /usr/share/applications -name "*$$pkg*.desktop" 2>/dev/null | head -1)' \
-		'    if [ -n "$$desktop" ]; then' \
-		'        gtk-launch "$(basename "$$desktop" .desktop)" 2>/dev/null || exit 1' \
-		'        return' \
-		'    fi' \
-		'    local fp_id=$$(find_flatpak_id "$$pkg")' \
-		'    if [ -n "$$fp_id" ] && flatpak_installed "$$fp_id"; then' \
-		'        flatpak run --user "$$fp_id"' \
-		'        return' \
-		'    fi' \
-		'    echo "No executable found for '\''$$pkg'\''."' \
-		'    exit 1' \
-		'}' \
-		'update() {' \
-		'    echo "Updating APT..."; sudo apt update && sudo apt upgrade -y' \
-		'    echo "Updating Flatpak..."; flatpak update --user -y' \
-		'}' \
-		'list() {' \
-		'    echo "=== APT manual packages ==="' \
-		'    comm -23 <(apt-mark showmanual | sort) <(gzip -dc /var/log/installer/initial-status.gz | grep '\''^Package:'\'' | cut -d'\'' '\'' -f2 | sort) 2>/dev/null || echo "(unknown baseline)"' \
-		'    echo -e "\n=== Flatpak (user) ==="' \
-		'    flatpak list --user --columns=application,name 2>/dev/null || echo "none"' \
-		'}' \
-		'[ $$# -lt 1 ] && usage' \
-		'cmd="$$1"; shift' \
-		'case "$$cmd" in' \
-		'    search)  search "$$@" ;;' \
-		'    install) install "$$@" ;;' \
-		'    remove)  remove "$$@" ;;' \
-		'    run)     run "$$@" ;;' \
-		'    update)  update ;;' \
-		'    list)    list ;;' \
-		'    *) usage ;;' \
-		'esac' 
-	 > $@
+	@cat > $@ <<'SCRIPTEOF'
+	#!/usr/bin/env bash
+	# usp - LightOS Unified Package Manager (APT + Flatpak --user)
+	set -e
+	FLATPAK_USER_DIR="$HOME/.local/share/flatpak"
+	[ ! -d "$FLATPAK_USER_DIR" ] && flatpak config --user languages="*" &>/dev/null || true
+	usage() {
+	    cat <<EOF
+	usp – LightOS Unified Package Manager
+	Commands:
+	  search <term>        Search APT and Flathub
+	  install <pkg>        Install a package (choose source if both available)
+	  remove <pkg>         Remove from whatever source installed it
+	  run <pkg>            Launch an installed application
+	  update               Update APT and Flatpak user apps
+	  list                 Show manually installed APT and user Flatpak apps
+	EOF
+	    exit 1
+	}
+	flatpak_installed() { flatpak list --user --columns=application 2>/dev/null | grep -Fxq "$1"; }
+	apt_installed() { dpkg -l "$1" 2>/dev/null | grep -q '^ii'; }
+	find_flatpak_id() { flatpak search --user "$1" 2>/dev/null | head -1 | awk '{print $1}'; }
+	search() {
+	    echo -e "\e[1m=== APT Packages ===\e[0m"
+	    apt-cache search "$1" 2>/dev/null | head -20 || true
+	    echo -e "\n\e[1m=== Flatpak Applications (Flathub) ===\e[0m"
+	    flatpak search "$1" 2>/dev/null | head -20 || true
+	}
+	install() {
+	    local pkg="$1"
+	    local apt_candidate=$(apt-cache search "^${pkg}$" 2>/dev/null | awk '{print $1}' | head -1)
+	    local fp_id=$(find_flatpak_id "$pkg")
+	    if [ -z "$apt_candidate" ] && [ -z "$fp_id" ]; then echo "Not found."; exit 1; fi
+	    if [ -z "$apt_candidate" ]; then
+	        echo "Installing Flatpak (user): $fp_id"
+	        flatpak install --user -y flathub "$fp_id"
+	    elif [ -z "$fp_id" ]; then
+	        echo "Installing APT: $apt_candidate"
+	        sudo apt install -y "$apt_candidate"
+	    else
+	        echo "Found two options:"
+	        echo "  1) APT: $apt_candidate"
+	        echo "  2) Flatpak: $fp_id"
+	        read -p "Choose [1/2]: " choice
+	        case "$choice" in
+	            1) sudo apt install -y "$apt_candidate" ;;
+	            2) flatpak install --user -y flathub "$fp_id" ;;
+	            *) echo "Invalid"; exit 1 ;;
+	        esac
+	    fi
+	}
+	remove() {
+	    local pkg="$1"
+	    if apt_installed "$pkg"; then
+	        sudo apt remove --purge -y "$pkg" && echo "Removed APT: $pkg"
+	        return
+	    fi
+	    local fp_id=$(find_flatpak_id "$pkg")
+	    if [ -n "$fp_id" ] && flatpak_installed "$fp_id"; then
+	        flatpak uninstall --user -y "$fp_id" && echo "Removed Flatpak: $fp_id"
+	        return
+	    fi
+	    echo "Not installed."
+	    exit 1
+	}
+	run() {
+	    local pkg="$1"
+	    local desktop=$(find /usr/share/applications -name "*${pkg}*.desktop" 2>/dev/null | head -1)
+	    if [ -n "$desktop" ]; then
+	        gtk-launch "$(basename "$desktop" .desktop)" 2>/dev/null || exit 1
+	        return
+	    fi
+	    local fp_id=$(find_flatpak_id "$pkg")
+	    if [ -n "$fp_id" ] && flatpak_installed "$fp_id"; then
+	        flatpak run --user "$fp_id"
+	        return
+	    fi
+	    echo "No executable found for '$pkg'."
+	    exit 1
+	}
+	update() {
+	    echo "Updating APT..."; sudo apt update && sudo apt upgrade -y
+	    echo "Updating Flatpak..."; flatpak update --user -y
+	}
+	list() {
+	    echo "=== APT manual packages ==="
+	    comm -23 <(apt-mark showmanual | sort) <(gzip -dc /var/log/installer/initial-status.gz | grep '^Package:' | cut -d' ' -f2 | sort) 2>/dev/null || echo "(unknown baseline)"
+	    echo -e "\n=== Flatpak (user) ==="
+	    flatpak list --user --columns=application,name 2>/dev/null || echo "none"
+	}
+	[ $# -lt 1 ] && usage
+	cmd="$1"; shift
+	case "$cmd" in
+	    search)  search "$@" ;;
+	    install) install "$@" ;;
+	    remove)  remove "$@" ;;
+	    run)     run "$@" ;;
+	    update)  update ;;
+	    list)    list ;;
+	    *) usage ;;
+	esac
+	SCRIPTEOF
 	@chmod +x $@
 
 # ----------------------------------------------------------------------
@@ -294,11 +302,28 @@ configure: configure.sh
 # 1. Minimal Debian base
 # ----------------------------------------------------------------------
 base:
+	@echo "==> Preparing rootfs mount..."
+	sudo mkdir -p $(ROOTFS)
+	sudo umount $(ROOTFS) 2>/dev/null || true
+	sudo mount --bind $(ROOTFS) $(ROOTFS) 2>/dev/null || true
+	sudo mount -o remount,exec,dev $(ROOTFS) 2>/dev/null || true
 	@echo "==> Bootstrapping Debian $(DEBIAN_CODENAME)..."
 	sudo debootstrap --arch=amd64 --variant=minbase $(DEBIAN_CODENAME) $(ROOTFS) http://deb.debian.org/debian
 	sudo mkdir -p $(ROOTFS)/etc/apt/sources.list.d
-	echo "Types: deb\nURIs: http://deb.debian.org/debian\nSuites: $(DEBIAN_CODENAME) $(DEBIAN_CODENAME)-updates\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg" | sudo tee $(ROOTFS)/etc/apt/sources.list.d/debian.sources
-	echo "Types: deb\nURIs: http://security.debian.org/debian-security\nSuites: $(DEBIAN_CODENAME)-security\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg" | sudo tee $(ROOTFS)/etc/apt/sources.list.d/debian-security.sources
+	cat <<-'EOFF' | sudo tee $(ROOTFS)/etc/apt/sources.list.d/debian.sources
+	Types: deb
+	URIs: http://deb.debian.org/debian
+	Suites: $(DEBIAN_CODENAME) $(DEBIAN_CODENAME)-updates
+	Components: main contrib non-free non-free-firmware
+	Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+	EOFF
+	cat <<-'EOFF' | sudo tee $(ROOTFS)/etc/apt/sources.list.d/debian-security.sources
+	Types: deb
+	URIs: http://security.debian.org/debian-security
+	Suites: $(DEBIAN_CODENAME)-security
+	Components: main contrib non-free non-free-firmware
+	Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+	EOFF
 	sudo chroot $(ROOTFS) apt update
 	# Only the bare essentials for kernel compilation
 	sudo chroot $(ROOTFS) apt install -y --no-install-recommends \
