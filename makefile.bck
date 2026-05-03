@@ -333,12 +333,13 @@ base:
 # 2. Kernel – standard or ultra‑minimal
 # ----------------------------------------------------------------------
 kernel: base
-	@echo "==> Downloading Linux kernel $(KERNEL_VERSION)..."
-	wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$(KERNEL_VERSION).tar.xz || \
+		@echo "==> Downloading Linux kernel $(KERNEL_VERSION)..."
+		wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$(KERNEL_VERSION).tar.xz || \
 		(echo "Kernel download failed – using fallback 7.0.3"; \
 		 KERNEL_VERSION=7.0.3; \
 		 wget -q https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.0.3.tar.xz)
-	xz -d -v linux-$(KERNEL_VERSION).tar.xz -C $(ROOTFS)/usr/src
+		sudo mkdir -p $(ROOTFS)/usr/src
+		sudo tar -xvf linux-$(KERNEL_VERSION).tar.xz -C $(ROOTFS)/usr/src
 ifeq ($(KERNEL_TYPE),minimal)
 	@echo "==> Applying tinyconfig + essential drivers..."
 	sudo chroot $(ROOTFS) bash -c "cd /usr/src/linux-$(KERNEL_VERSION) && \
